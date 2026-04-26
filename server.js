@@ -1,14 +1,13 @@
 /* ================================================================
-   SmartChatOnly — Backend Server
-   Express + Socket.io + JSON file storage
-   End-to-End Encryption: server NEVER sees plaintext messages
+   SmartChatOnly — Backend Server v2
+   Separate Admin Portal & Client Site
+   E2E Encrypted Chat + WebRTC Video Calls
    ================================================================ */
 
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const bcrypt = require('bcryptjs');
-const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const cors = require('cors');
 const path = require('path');
@@ -18,96 +17,111 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 10e6 });
 
-// ========== CONFIG ==========
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
-const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
+const NOTIFICATIONS_FILE = path.join(DATA_DIR, 'notifications.json');
 
-// Ensure data directories exist
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
-// ========== SIMPLE JSON DB ==========
+// ========== JSON DB ==========
 function readJSON(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch { return fallback; }
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
-function writeJSON(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
-}
+function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2)); }
 
 let users = readJSON(USERS_FILE, {});
 let messages = readJSON(MESSAGES_FILE, []);
+let notifications = readJSON(NOTIFICATIONS_FILE, []);
 
 function saveUsers() { writeJSON(USERS_FILE, users); }
 function saveMessages() { writeJSON(MESSAGES_FILE, messages); }
+function saveNotifications() { writeJSON(NOTIFICATIONS_FILE, notifications); }
 
-// ========== INIT ADMIN ACCOUNT ==========
+function addNotification(type, message, data = {}) {
+  const notif = { id: uuidv4(), type, message, data, timestamp: new Date().toISOString(), read: false };
+  notifications.unshift(notif);
+  if (notifications.length > 100) notifications = notifications.slice(0, 100);
+  saveNotifications();
+  // Push to admin if online
+  const adminSocketId = onlineUsers.get('admin');
+  if (adminSocketId) io.to(adminSocketId).emit('admin_notification', notif);
+  return notif;
+}
+
+// ========== INIT ADMIN ==========
 async function initAdmin() {
   if (!users['admin']) {
-    const hash = await bcrypt.hash('admin123', 10);
+    const hash = await bcrypt.hash('AdminSecure!99', 10);
     users['admin'] = {
-      username: 'admin',
-      fullName: 'Admin',
-      passwordHash: hash,
-      role: 'admin',
-      publicKey: null,          // set on first login from browser
-      encryptedPrivateKey: null,
-      keySalt: null,
-      keyIv: null,
-      createdAt: new Date().toISOString()
+      username: 'admin', fullName: 'Admin', passwordHash: hash, role: 'admin',
+      publicKey: null, encryptedPrivateKey: null, keySalt: null, keyIv: null,
+      blocked: false, createdAt: new Date().toISOString()
     };
     saveUsers();
-    console.log('Admin account created (admin / admin123)');
+    console.log('Admin account created (admin / AdminSecure!99)');
   }
 }
 
 // ========== MIDDLEWARE ==========
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
 
-// Simple token auth
-const tokens = new Map(); // token -> username
+const tokens = new Map();
 
 function authMiddleware(req, res, next) {
   const token = req.headers['x-auth-token'];
   if (!token || !tokens.has(token)) return res.status(401).json({ error: 'Unauthorized' });
   req.username = tokens.get(token);
   req.user = users[req.username];
+  if (!req.user) return res.status(401).json({ error: 'User not found' });
   next();
 }
+
+function adminOnly(req, res, next) {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  next();
+}
+
+// ========== ROUTES: Serve separate pages ==========
+// Client site at /
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'client.html'));
+});
+
+// Admin portal at /admin-portal
+app.get('/admin-portal', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// Static files (socket.io client, etc.)
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ========== AUTH ROUTES ==========
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password, fullName, publicKey, encryptedPrivateKey, keySalt, keyIv } = req.body;
-
     if (!username || !password || !fullName) return res.status(400).json({ error: 'All fields required' });
     if (username.length < 3) return res.status(400).json({ error: 'Username min 3 chars' });
     if (!/^[a-z0-9_]+$/.test(username)) return res.status(400).json({ error: 'Username: lowercase, numbers, underscores only' });
     if (password.length < 6) return res.status(400).json({ error: 'Password min 6 chars' });
+    if (username === 'admin') return res.status(400).json({ error: 'Reserved username' });
     if (users[username]) return res.status(400).json({ error: 'Username already taken' });
 
     const hash = await bcrypt.hash(password, 10);
     users[username] = {
-      username, fullName,
-      passwordHash: hash,
-      role: 'client',
-      publicKey: publicKey || null,
-      encryptedPrivateKey: encryptedPrivateKey || null,
-      keySalt: keySalt || null,
-      keyIv: keyIv || null,
-      createdAt: new Date().toISOString()
+      username, fullName, passwordHash: hash, role: 'client',
+      publicKey: publicKey || null, encryptedPrivateKey: encryptedPrivateKey || null,
+      keySalt: keySalt || null, keyIv: keyIv || null,
+      blocked: false, createdAt: new Date().toISOString()
     };
     saveUsers();
 
-    // Auto welcome message from admin (encrypted later client-side, placeholder here)
+    addNotification('signup', `New client signed up: ${fullName} (@${username})`, { username, fullName });
+
     const token = uuidv4();
     tokens.set(token, username);
-
     res.json({ success: true, token, user: sanitizeUser(users[username]) });
   } catch (e) {
     console.error('Register error:', e);
@@ -117,17 +131,26 @@ app.post('/api/register', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, portal } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'All fields required' });
 
     const user = users[username.toLowerCase()];
     if (!user) return res.status(400).json({ error: 'Account not found' });
+    if (user.blocked) return res.status(403).json({ error: 'Your account has been suspended. Contact support.' });
+
+    // Enforce portal separation
+    if (portal === 'admin' && user.role !== 'admin') return res.status(403).json({ error: 'Admin access only' });
+    if (portal === 'client' && user.role === 'admin') return res.status(403).json({ error: 'Please use the admin portal to sign in.' });
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return res.status(400).json({ error: 'Incorrect password' });
 
     const token = uuidv4();
     tokens.set(token, user.username);
+
+    if (user.role === 'client') {
+      addNotification('login', `Client logged in: ${user.fullName} (@${user.username})`, { username: user.username });
+    }
 
     res.json({
       success: true, token,
@@ -142,7 +165,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Update user keys (needed for admin first login and key rotation)
 app.post('/api/update-keys', authMiddleware, (req, res) => {
   const { publicKey, encryptedPrivateKey, keySalt, keyIv } = req.body;
   users[req.username].publicKey = publicKey;
@@ -153,30 +175,41 @@ app.post('/api/update-keys', authMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
-// ========== API ROUTES ==========
+// ========== CONTACTS & MESSAGES ==========
 app.get('/api/contacts', authMiddleware, (req, res) => {
-  const contactList = [];
+  const list = [];
   if (req.user.role === 'admin') {
-    // Admin sees all clients
     for (const u of Object.values(users)) {
-      if (u.role === 'client') contactList.push(sanitizeUser(u));
+      if (u.role === 'client' && !u.blocked) list.push(sanitizeUser(u));
     }
-  } else {
-    // Client sees only admin
-    if (users['admin']) contactList.push(sanitizeUser(users['admin']));
   }
-  res.json(contactList);
+  // Clients get NO contact list — admin initiates
+  res.json(list);
 });
 
 app.get('/api/messages', authMiddleware, (req, res) => {
   const withUser = req.query.with;
   if (!withUser) return res.status(400).json({ error: 'Missing "with" param' });
-
   const chatMsgs = messages.filter(m =>
     (m.from === req.username && m.to === withUser) ||
     (m.from === withUser && m.to === req.username)
   );
   res.json(chatMsgs);
+});
+
+// Client: get my conversations (only shows admin if admin has messaged them)
+app.get('/api/my-conversations', authMiddleware, (req, res) => {
+  if (req.user.role === 'admin') return res.json([]);
+  // Find if admin has sent any messages to this client
+  const hasMessages = messages.some(m =>
+    (m.from === 'admin' && m.to === req.username) ||
+    (m.from === req.username && m.to === 'admin')
+  );
+  if (hasMessages && users['admin']) {
+    res.json([sanitizeUser(users['admin'])]);
+  } else {
+    res.json([]);
+  }
 });
 
 app.get('/api/publickey/:username', authMiddleware, (req, res) => {
@@ -185,28 +218,63 @@ app.get('/api/publickey/:username', authMiddleware, (req, res) => {
   res.json({ publicKey: user.publicKey });
 });
 
-// Media upload (encrypted blob)
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: MEDIA_DIR,
-    filename: (req, file, cb) => cb(null, uuidv4() + '.enc')
-  }),
-  limits: { fileSize: 10 * 1024 * 1024 }
+// ========== ADMIN: User Management ==========
+app.get('/api/admin/users', authMiddleware, adminOnly, (req, res) => {
+  const list = Object.values(users).filter(u => u.role === 'client').map(u => ({
+    ...sanitizeUser(u), blocked: u.blocked || false
+  }));
+  res.json(list);
 });
 
-app.post('/api/upload', authMiddleware, upload.single('media'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file' });
-  res.json({ mediaId: req.file.filename });
+app.post('/api/admin/block/:username', authMiddleware, adminOnly, (req, res) => {
+  const user = users[req.params.username];
+  if (!user || user.role === 'admin') return res.status(404).json({ error: 'User not found' });
+  user.blocked = true;
+  saveUsers();
+  // Disconnect blocked user
+  const sid = onlineUsers.get(req.params.username);
+  if (sid) io.to(sid).emit('account_blocked');
+  res.json({ success: true });
 });
 
-app.get('/api/media/:id', authMiddleware, (req, res) => {
-  const filePath = path.join(MEDIA_DIR, req.params.id);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
-  res.sendFile(filePath);
+app.post('/api/admin/unblock/:username', authMiddleware, adminOnly, (req, res) => {
+  const user = users[req.params.username];
+  if (!user || user.role === 'admin') return res.status(404).json({ error: 'User not found' });
+  user.blocked = false;
+  saveUsers();
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/delete/:username', authMiddleware, adminOnly, (req, res) => {
+  const username = req.params.username;
+  if (!users[username] || users[username].role === 'admin') return res.status(404).json({ error: 'User not found' });
+  delete users[username];
+  saveUsers();
+  messages = messages.filter(m => m.from !== username && m.to !== username);
+  saveMessages();
+  const sid = onlineUsers.get(username);
+  if (sid) io.to(sid).emit('account_deleted');
+  res.json({ success: true });
+});
+
+app.get('/api/admin/notifications', authMiddleware, adminOnly, (req, res) => {
+  res.json(notifications);
+});
+
+app.post('/api/admin/notifications/read', authMiddleware, adminOnly, (req, res) => {
+  notifications.forEach(n => n.read = true);
+  saveNotifications();
+  res.json({ success: true });
+});
+
+// Track client site visits
+app.post('/api/track-visit', (req, res) => {
+  addNotification('visit', 'Someone visited the client site', { ip: req.ip, timestamp: new Date().toISOString() });
+  res.json({ ok: true });
 });
 
 // ========== SOCKET.IO ==========
-const onlineUsers = new Map(); // username -> socket.id
+const onlineUsers = new Map();
 
 io.on('connection', (socket) => {
   let socketUser = null;
@@ -214,24 +282,27 @@ io.on('connection', (socket) => {
   socket.on('authenticate', (token) => {
     const username = tokens.get(token);
     if (!username) return socket.emit('auth_error', 'Invalid token');
+    const user = users[username];
+    if (!user) return socket.emit('auth_error', 'User not found');
+    if (user.blocked) return socket.emit('account_blocked');
+
     socketUser = username;
     onlineUsers.set(username, socket.id);
     io.emit('user_online', { username, online: true });
-    // Send online users list
     socket.emit('online_users', Array.from(onlineUsers.keys()));
   });
 
   socket.on('send_message', (msg) => {
     if (!socketUser) return;
+    const sender = users[socketUser];
+    if (!sender || sender.blocked) return;
+
     const message = {
-      id: uuidv4(),
-      from: socketUser,
-      to: msg.to,
+      id: uuidv4(), from: socketUser, to: msg.to,
       type: msg.type || 'text',
       encrypted: msg.encrypted,
       encKeyForSender: msg.encKeyForSender,
       encKeyForRecipient: msg.encKeyForRecipient,
-      mediaId: msg.mediaId || null,
       mediaType: msg.mediaType || null,
       mediaName: msg.mediaName || null,
       timestamp: new Date().toISOString()
@@ -239,29 +310,52 @@ io.on('connection', (socket) => {
     messages.push(message);
     saveMessages();
 
-    // Send to recipient if online
     const recipientSocket = onlineUsers.get(msg.to);
-    if (recipientSocket) {
-      io.to(recipientSocket).emit('new_message', message);
-    }
-    // Send back to sender for confirmation
+    if (recipientSocket) io.to(recipientSocket).emit('new_message', message);
     socket.emit('message_sent', message);
+  });
+
+  // ===== WebRTC Video Call Signaling =====
+  socket.on('call_user', (data) => {
+    if (!socketUser) return;
+    const caller = users[socketUser];
+    if (!caller || caller.role !== 'admin') return; // Only admin can call
+    const recipientSocket = onlineUsers.get(data.to);
+    if (recipientSocket) {
+      io.to(recipientSocket).emit('incoming_call', { from: socketUser, offer: data.offer });
+    } else {
+      socket.emit('call_failed', { reason: 'User is offline' });
+    }
+  });
+
+  socket.on('answer_call', (data) => {
+    if (!socketUser) return;
+    const callerSocket = onlineUsers.get(data.to);
+    if (callerSocket) io.to(callerSocket).emit('call_answered', { from: socketUser, answer: data.answer });
+  });
+
+  socket.on('ice_candidate', (data) => {
+    if (!socketUser) return;
+    const targetSocket = onlineUsers.get(data.to);
+    if (targetSocket) io.to(targetSocket).emit('ice_candidate', { from: socketUser, candidate: data.candidate });
+  });
+
+  socket.on('end_call', (data) => {
+    if (!socketUser) return;
+    const targetSocket = onlineUsers.get(data.to);
+    if (targetSocket) io.to(targetSocket).emit('call_ended', { from: socketUser });
   });
 
   socket.on('typing', (data) => {
     if (!socketUser) return;
-    const recipientSocket = onlineUsers.get(data.to);
-    if (recipientSocket) {
-      io.to(recipientSocket).emit('user_typing', { from: socketUser });
-    }
+    const s = onlineUsers.get(data.to);
+    if (s) io.to(s).emit('user_typing', { from: socketUser });
   });
 
   socket.on('stop_typing', (data) => {
     if (!socketUser) return;
-    const recipientSocket = onlineUsers.get(data.to);
-    if (recipientSocket) {
-      io.to(recipientSocket).emit('user_stop_typing', { from: socketUser });
-    }
+    const s = onlineUsers.get(data.to);
+    if (s) io.to(s).emit('user_stop_typing', { from: socketUser });
   });
 
   socket.on('disconnect', () => {
@@ -272,21 +366,16 @@ io.on('connection', (socket) => {
   });
 });
 
-// ========== HELPERS ==========
 function sanitizeUser(u) {
-  return {
-    username: u.username,
-    fullName: u.fullName,
-    role: u.role,
-    publicKey: u.publicKey,
-    createdAt: u.createdAt
-  };
+  return { username: u.username, fullName: u.fullName, role: u.role, publicKey: u.publicKey, createdAt: u.createdAt };
 }
 
 // ========== START ==========
 initAdmin().then(() => {
   server.listen(PORT, () => {
-    console.log(`SmartChatOnly running on port ${PORT}`);
-    console.log(`Admin login: admin / admin123`);
+    console.log(`SmartChatOnly v2 running on port ${PORT}`);
+    console.log(`Client site: /`);
+    console.log(`Admin portal: /admin-portal`);
+    console.log(`Admin login: admin / AdminSecure!99`);
   });
 });

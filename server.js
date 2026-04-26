@@ -14,6 +14,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
+app.set('trust proxy', true); // Get real IP behind Render proxy
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 10e6 });
 
@@ -64,6 +65,33 @@ async function initAdmin() {
   }
 }
 
+// ========== DEVICE & IP HELPERS ==========
+function parseDevice(ua) {
+  if (!ua) return 'Unknown Device';
+  let device = '';
+  if (/iPhone/.test(ua)) device = 'iPhone';
+  else if (/iPad/.test(ua)) device = 'iPad';
+  else if (/Android/.test(ua)) {
+    const m = ua.match(/;\s*([^;)]+)\s*Build\//);
+    device = m ? m[1].trim() : 'Android Device';
+  }
+  else if (/Windows/.test(ua)) device = 'Windows PC';
+  else if (/Macintosh|Mac OS/.test(ua)) device = 'Mac';
+  else if (/Linux/.test(ua)) device = 'Linux PC';
+  else device = 'Unknown Device';
+  let browser = '';
+  if (/Edg\//.test(ua)) browser = 'Edge';
+  else if (/OPR\/|Opera/.test(ua)) browser = 'Opera';
+  else if (/Chrome\//.test(ua) && !/Edg\//.test(ua)) browser = 'Chrome';
+  else if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) browser = 'Safari';
+  else if (/Firefox\//.test(ua)) browser = 'Firefox';
+  return browser ? `${device} · ${browser}` : device;
+}
+
+function getIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'Unknown';
+}
+
 // ========== MIDDLEWARE ==========
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -101,7 +129,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ========== AUTH ROUTES ==========
 app.post('/api/register', async (req, res) => {
   try {
-    const { username, password, fullName, publicKey, encryptedPrivateKey, keySalt, keyIv } = req.body;
+    const { username, password, fullName, publicKey, encryptedPrivateKey, keySalt, keyIv, deviceInfo } = req.body;
     if (!username || !password || !fullName) return res.status(400).json({ error: 'All fields required' });
     if (username.length < 3) return res.status(400).json({ error: 'Username min 3 chars' });
     if (!/^[a-z0-9_]+$/.test(username)) return res.status(400).json({ error: 'Username: lowercase, numbers, underscores only' });
@@ -118,7 +146,9 @@ app.post('/api/register', async (req, res) => {
     };
     saveUsers();
 
-    addNotification('signup', `New client signed up: ${fullName} (@${username})`, { username, fullName });
+    const ip = getIP(req);
+    const device = parseDevice(deviceInfo || req.headers['user-agent']);
+    addNotification('signup', `New client signed up: ${fullName} (@${username})`, { username, fullName, ip, device });
 
     const token = uuidv4();
     tokens.set(token, username);
@@ -131,7 +161,7 @@ app.post('/api/register', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
-    const { username, password, portal } = req.body;
+    const { username, password, portal, deviceInfo } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'All fields required' });
 
     const user = users[username.toLowerCase()];
@@ -149,7 +179,9 @@ app.post('/api/login', async (req, res) => {
     tokens.set(token, user.username);
 
     if (user.role === 'client') {
-      addNotification('login', `Client logged in: ${user.fullName} (@${user.username})`, { username: user.username });
+      const ip = getIP(req);
+      const device = parseDevice(deviceInfo || req.headers['user-agent']);
+      addNotification('login', `Client logged in: ${user.fullName} (@${user.username})`, { username: user.username, ip, device });
     }
 
     res.json({
@@ -269,7 +301,9 @@ app.post('/api/admin/notifications/read', authMiddleware, adminOnly, (req, res) 
 
 // Track client site visits
 app.post('/api/track-visit', (req, res) => {
-  addNotification('visit', 'Someone visited the client site', { ip: req.ip, timestamp: new Date().toISOString() });
+  const ip = getIP(req);
+  const device = parseDevice(req.body.deviceInfo || req.headers['user-agent']);
+  addNotification('visit', `Site visitor — ${device}`, { ip, device, timestamp: new Date().toISOString() });
   res.json({ ok: true });
 });
 

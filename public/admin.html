@@ -125,6 +125,7 @@ textarea::placeholder{color:var(--muted)}
 .ni .n-icon.visit{background:rgba(59,130,246,.12);color:var(--accentL)}
 .ni .n-icon.login{background:rgba(245,158,11,.12);color:var(--warn)}
 .ni .n-msg{flex:1;color:var(--txt2);line-height:1.4}
+.ni .n-detail{font-size:10px;color:var(--accentL);margin-top:2px;line-height:1.3;word-break:break-all}
 .ni .n-time{font-size:10px;color:var(--muted);margin-top:2px}
 
 /* Lightbox */
@@ -369,10 +370,16 @@ async function loadNotifs(){try{notifs=await api('/api/admin/notifications');ren
 function renderNotifs(){
   const unread=notifs.filter(n=>!n.read).length;
   const badge=$('notifBadge');if(unread>0){badge.style.display='flex';badge.textContent=unread}else badge.style.display='none';
-  $('notifList').innerHTML=notifs.slice(0,30).map(n=>`<div class="ni ${n.read?'':'unread'}">
+  $('notifList').innerHTML=notifs.slice(0,30).map(n=>{
+    const d=n.data||{};
+    const details=[];
+    if(d.device)details.push(d.device);
+    if(d.ip)details.push('IP: '+d.ip);
+    const detailLine=details.length?`<div class="n-detail">${esc(details.join(' — '))}</div>`:'';
+    return`<div class="ni ${n.read?'':'unread'}">
     <div class="n-icon ${n.type}">${n.type==='signup'?'&#128100;':n.type==='visit'?'&#128065;':'&#128272;'}</div>
-    <div><div class="n-msg">${esc(n.message)}</div><div class="n-time">${fmtT(n.timestamp)}</div></div>
-  </div>`).join('')||'<div style="padding:20px;text-align:center;color:var(--muted);font-size:12px">No notifications</div>';
+    <div><div class="n-msg">${esc(n.message)}</div>${detailLine}<div class="n-time">${fmtT(n.timestamp)}</div></div>
+  </div>`}).join('')||'<div style="padding:20px;text-align:center;color:var(--muted);font-size:12px">No notifications</div>';
 }
 function toggleNotifs(){const p=$('notifPanel');p.classList.toggle('active');if(p.classList.contains('active'))loadNotifs()}
 async function markAllRead(){await api('/api/admin/notifications/read',{});notifs.forEach(n=>n.read=true);renderNotifs()}

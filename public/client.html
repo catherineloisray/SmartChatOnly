@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1117">
 <title>SmartChatOnly — Secure Chat</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128274;</text></svg>">
 <script src="/socket.io/socket.io.js"></script>
@@ -98,7 +101,18 @@ a{color:var(--accentL);text-decoration:none}
 .toast{position:fixed;top:18px;right:18px;padding:10px 18px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);color:var(--txt);font-size:13px;box-shadow:var(--shadow);z-index:999;transform:translateX(120%);transition:transform .3s}
 .toast.show{transform:translateX(0)}
 
-@media(max-width:768px){.msg{max-width:85%}}
+@media(max-width:768px){
+  .msg{max-width:85%}
+  .auth-card{padding:24px 20px;margin:0 12px}
+  .app-header{padding:10px 14px}
+  .chat-hdr{padding:10px 14px}
+  .inp-area{padding:8px 10px}
+  .msgs{padding:12px 10px;-webkit-overflow-scrolling:touch}
+  .inp-wrap{padding:4px 8px}
+  .btn-at,.btn-snd{width:34px;height:34px}
+}
+html,body{-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+.msgs{transform:translateZ(0);will-change:scroll-position}
 </style>
 </head>
 <body>
@@ -184,8 +198,8 @@ a{color:var(--accentL);text-decoration:none}
 <script>
 const socket=io();let currentUser=null,privateKey=null,authToken=null,chatCache=[],onlineSet=new Set(),pendingMedia=null,typingTimer=null;
 
-// Track visit
-fetch('/api/track-visit',{method:'POST',headers:{'Content-Type':'application/json'}}).catch(()=>{});
+// Track visit with device info
+fetch('/api/track-visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceInfo:navigator.userAgent})}).catch(()=>{});
 
 // ===== CRYPTO =====
 const E2E={
@@ -208,7 +222,7 @@ async function doLogin(){
   if(!u||!p){sErr(e,'Please fill in all fields.');return}
   $('lBtn').disabled=true;$('lLoad').style.display='block';
   try{
-    const r=await api('/api/login',{username:u,password:p,portal:'client'});
+    const r=await api('/api/login',{username:u,password:p,portal:'client',deviceInfo:navigator.userAgent});
     if(r.error){sErr(e,r.error);return}
     authToken=r.token;currentUser=r.user;
     if(r.encryptedPrivateKey){privateKey=await E2E.decPriv(r.encryptedPrivateKey,r.keySalt,r.keyIv,p)}
@@ -228,7 +242,7 @@ async function doSignup(){
   $('sBtn').disabled=true;$('sLoad').style.display='block';
   try{
     const k=await E2E.genKeys(),enc=await E2E.encPriv(k.privateKey,p);
-    const r=await api('/api/register',{username:u,password:p,fullName:fn,publicKey:k.publicKey,...enc});
+    const r=await api('/api/register',{username:u,password:p,fullName:fn,publicKey:k.publicKey,...enc,deviceInfo:navigator.userAgent});
     if(r.error){sErr(e,r.error);return}
     toast('Account created! Sign in now.');showLogin();$('lUser').value=u;
   }catch(ex){sErr(e,'Connection error.');console.error(ex)}
@@ -335,6 +349,21 @@ function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');set
 function openLB(u,t){if(t==='i'){$('lbImg').src=u;$('lbImg').style.display='block';$('lbVid').style.display='none'}else{$('lbVid').src=u;$('lbVid').style.display='block';$('lbImg').style.display='none'}$('lb').classList.add('active')}
 function closeLB(){$('lb').classList.remove('active');$('lbVid').pause()}
 async function api(url,body){const o={headers:{'Content-Type':'application/json'}};if(authToken)o.headers['x-auth-token']=authToken;if(body){o.method='POST';o.body=JSON.stringify(body)}return(await fetch(url,o)).json()}
+
+// ===== MOBILE KEYBOARD FIX =====
+if(window.visualViewport){
+  let pendingScroll=null;
+  window.visualViewport.addEventListener('resize',()=>{
+    clearTimeout(pendingScroll);
+    pendingScroll=setTimeout(()=>{
+      const msgs=$('chatMsgs');if(msgs)msgs.scrollTop=msgs.scrollHeight;
+      const inp=$('msgInp');if(inp&&document.activeElement===inp)inp.scrollIntoView({block:'nearest'});
+    },100);
+  });
+}
+// Keep chat scrolled to bottom on new content
+const chatObs=new MutationObserver(()=>{const m=$('chatMsgs');if(m)m.scrollTop=m.scrollHeight});
+document.addEventListener('DOMContentLoaded',()=>{const m=$('chatMsgs');if(m)chatObs.observe(m,{childList:true})});
 </script>
 </body>
 </html>

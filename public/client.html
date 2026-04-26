@@ -95,33 +95,6 @@ a{color:var(--accentL);text-decoration:none}
 .lb img,.lb video{max-width:90%;max-height:90%;border-radius:var(--rs)}
 .lb .clb{position:absolute;top:18px;right:18px;width:38px;height:38px;background:rgba(255,255,255,.1);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer}
 
-/* Incoming Call */
-.call-overlay{display:none;position:fixed;inset:0;background:rgba(15,17,23,.95);z-index:2000;align-items:center;justify-content:center;flex-direction:column}
-.call-overlay.active{display:flex}
-.call-info{text-align:center;margin-bottom:30px}
-.call-info .caller-av{width:80px;height:80px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:700;color:#fff;margin:0 auto 16px}
-.call-info h2{font-size:22px;margin-bottom:6px}
-.call-info p{color:var(--txt2);font-size:14px}
-.call-info .ring{color:var(--green);font-size:13px;margin-top:8px;animation:pulse 1.5s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.call-btns{display:flex;gap:24px}
-.call-btn{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;border:none;cursor:pointer}
-.call-btn.answer{background:var(--green)}
-.call-btn.answer:hover{background:#16a34a}
-.call-btn.decline{background:var(--red)}
-.call-btn.decline:hover{background:#dc2626}
-
-/* Active Call */
-.video-call{display:none;position:fixed;inset:0;background:#000;z-index:2000;flex-direction:column}
-.video-call.active{display:flex}
-.video-call .remote{flex:1;width:100%;object-fit:cover;background:#111}
-.video-call .local{position:absolute;bottom:80px;right:20px;width:160px;height:120px;border-radius:var(--rs);object-fit:cover;border:2px solid var(--border);background:#222;z-index:1}
-.call-controls{position:absolute;bottom:0;left:0;right:0;padding:16px;display:flex;justify-content:center;gap:16px;background:linear-gradient(transparent,rgba(0,0,0,.8))}
-.cc-btn{width:50px;height:50px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:none;color:#fff;cursor:pointer;font-size:20px}
-.cc-btn.end{background:var(--red)}
-.cc-btn.mute{background:rgba(255,255,255,.2)}
-.call-timer{position:absolute;top:20px;left:50%;transform:translateX(-50%);color:#fff;font-size:14px;background:rgba(0,0,0,.5);padding:4px 14px;border-radius:20px}
-
 .toast{position:fixed;top:18px;right:18px;padding:10px 18px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);color:var(--txt);font-size:13px;box-shadow:var(--shadow);z-index:999;transform:translateX(120%);transition:transform .3s}
 .toast.show{transform:translateX(0)}
 
@@ -204,40 +177,12 @@ a{color:var(--accentL);text-decoration:none}
   </div>
 </div>
 
-<!-- Incoming Call -->
-<div class="call-overlay" id="callOverlay">
-  <div class="call-info">
-    <div class="caller-av">A</div>
-    <h2>Incoming Video Call</h2>
-    <p>Admin is calling you</p>
-    <div class="ring">&#128222; Ringing...</div>
-  </div>
-  <div class="call-btns">
-    <button class="call-btn decline" onclick="declineCall()">&#128308;</button>
-    <button class="call-btn answer" onclick="answerCall()">&#128222;</button>
-  </div>
-</div>
-
-<!-- Active Video Call -->
-<div class="video-call" id="videoCall">
-  <div class="call-timer" id="callTimer">00:00</div>
-  <video class="remote" id="remoteVideo" autoplay playsinline></video>
-  <video class="local" id="localVideo" autoplay playsinline muted></video>
-  <div class="call-controls">
-    <button class="cc-btn mute" id="muteBtn" onclick="toggleMute()">&#127908;</button>
-    <button class="cc-btn end" onclick="endCall()">&#128308;</button>
-    <button class="cc-btn mute" id="camBtn" onclick="toggleCam()">&#127909;</button>
-  </div>
-</div>
-
 <!-- Lightbox -->
 <div class="lb" id="lb" onclick="closeLB()"><div class="clb">&times;</div><img id="lbImg" src="" style="display:none"><video id="lbVid" src="" controls style="display:none"></video></div>
 <div class="toast" id="toast"></div>
-<audio id="ringSound" loop preload="auto" src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgip6teleWXBEAAUh4lKF/WzZFd5mos3RtZXaYsbeRSxQSXYqir5BVHSJ5pLKteVxKW4ecs7mHSw=="></audio>
 
 <script>
 const socket=io();let currentUser=null,privateKey=null,authToken=null,chatCache=[],onlineSet=new Set(),pendingMedia=null,typingTimer=null;
-let peerConnection=null,localStream=null,callTimerInterval=null,callSeconds=0,incomingOffer=null;
 
 // Track visit
 fetch('/api/track-visit',{method:'POST',headers:{'Content-Type':'application/json'}}).catch(()=>{});
@@ -365,55 +310,6 @@ socket.on('new_message',async m=>{
 });
 socket.on('account_blocked',()=>{toast('Your account has been suspended.');logout()});
 socket.on('account_deleted',()=>{toast('Your account has been removed.');logout()});
-
-// ===== VIDEO CALL =====
-socket.on('incoming_call',async data=>{
-  incomingOffer=data;
-  $('callOverlay').classList.add('active');
-  try{$('ringSound').play()}catch{}
-});
-
-async function answerCall(){
-  $('callOverlay').classList.remove('active');
-  try{$('ringSound').pause();$('ringSound').currentTime=0}catch{}
-  try{
-    localStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
-    $('localVideo').srcObject=localStream;
-    peerConnection=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]});
-    localStream.getTracks().forEach(t=>peerConnection.addTrack(t,localStream));
-    peerConnection.ontrack=e=>{$('remoteVideo').srcObject=e.streams[0]};
-    peerConnection.onicecandidate=e=>{if(e.candidate)socket.emit('ice_candidate',{to:'admin',candidate:e.candidate})};
-    peerConnection.onconnectionstatechange=()=>{if(peerConnection.connectionState==='disconnected'||peerConnection.connectionState==='failed')endCall()};
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingOffer.offer));
-    const answer=await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    socket.emit('answer_call',{to:'admin',answer});
-    $('videoCall').classList.add('active');
-    callSeconds=0;callTimerInterval=setInterval(()=>{callSeconds++;$('callTimer').textContent=fmtTimer(callSeconds)},1000);
-  }catch(e){console.error(e);toast('Could not start video.');endCall()}
-}
-
-function declineCall(){
-  $('callOverlay').classList.remove('active');
-  try{$('ringSound').pause();$('ringSound').currentTime=0}catch{}
-  socket.emit('end_call',{to:'admin'});
-}
-
-function endCall(){
-  if(peerConnection){peerConnection.close();peerConnection=null}
-  if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null}
-  if(callTimerInterval){clearInterval(callTimerInterval);callTimerInterval=null}
-  $('videoCall').classList.remove('active');$('callOverlay').classList.remove('active');
-  $('remoteVideo').srcObject=null;$('localVideo').srcObject=null;
-  socket.emit('end_call',{to:'admin'});
-}
-
-socket.on('call_ended',()=>endCall());
-socket.on('ice_candidate',async d=>{if(peerConnection)try{await peerConnection.addIceCandidate(new RTCIceCandidate(d.candidate))}catch{}});
-
-function toggleMute(){if(!localStream)return;const a=localStream.getAudioTracks()[0];if(a){a.enabled=!a.enabled;$('muteBtn').style.opacity=a.enabled?1:.4}}
-function toggleCam(){if(!localStream)return;const v=localStream.getVideoTracks()[0];if(v){v.enabled=!v.enabled;$('camBtn').style.opacity=v.enabled?1:.4}}
-function fmtTimer(s){return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
 
 async function appendMsg(m){
   const isSent=m.from===currentUser.username,ek=isSent?m.encKeyForSender:m.encKeyForRecipient;

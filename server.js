@@ -1,7 +1,7 @@
 /* ================================================================
    SmartChatOnly — Backend Server v2
    Separate Admin Portal & Client Site
-   E2E Encrypted Chat + WebRTC Video Calls
+   E2E Encrypted Chat with Media Sharing
    ================================================================ */
 
 const express = require('express');
@@ -313,37 +313,6 @@ io.on('connection', (socket) => {
     const recipientSocket = onlineUsers.get(msg.to);
     if (recipientSocket) io.to(recipientSocket).emit('new_message', message);
     socket.emit('message_sent', message);
-  });
-
-  // ===== WebRTC Video Call Signaling =====
-  socket.on('call_user', (data) => {
-    if (!socketUser) return;
-    const caller = users[socketUser];
-    if (!caller || caller.role !== 'admin') return; // Only admin can call
-    const recipientSocket = onlineUsers.get(data.to);
-    if (recipientSocket) {
-      io.to(recipientSocket).emit('incoming_call', { from: socketUser, offer: data.offer });
-    } else {
-      socket.emit('call_failed', { reason: 'User is offline' });
-    }
-  });
-
-  socket.on('answer_call', (data) => {
-    if (!socketUser) return;
-    const callerSocket = onlineUsers.get(data.to);
-    if (callerSocket) io.to(callerSocket).emit('call_answered', { from: socketUser, answer: data.answer });
-  });
-
-  socket.on('ice_candidate', (data) => {
-    if (!socketUser) return;
-    const targetSocket = onlineUsers.get(data.to);
-    if (targetSocket) io.to(targetSocket).emit('ice_candidate', { from: socketUser, candidate: data.candidate });
-  });
-
-  socket.on('end_call', (data) => {
-    if (!socketUser) return;
-    const targetSocket = onlineUsers.get(data.to);
-    if (targetSocket) io.to(targetSocket).emit('call_ended', { from: socketUser });
   });
 
   socket.on('typing', (data) => {

@@ -78,7 +78,6 @@ input,textarea{font-family:inherit;outline:none}
 .ch-hdr .st.on::before{background:var(--green)}.ch-hdr .st.off::before{background:var(--muted)}
 .ch-actions{margin-left:auto;display:flex;gap:6px}
 .act-btn{padding:5px 10px;border-radius:var(--rs);font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px}
-.act-btn.call{background:rgba(34,197,94,.12);color:var(--green)}.act-btn.call:hover{background:rgba(34,197,94,.2)}
 .act-btn.block{background:rgba(239,68,68,.12);color:var(--red)}.act-btn.block:hover{background:rgba(239,68,68,.2)}
 .act-btn.del{background:rgba(239,68,68,.12);color:var(--red)}.act-btn.del:hover{background:rgba(239,68,68,.2)}
 .act-btn:disabled{opacity:.4;cursor:not-allowed}
@@ -127,19 +126,6 @@ textarea::placeholder{color:var(--muted)}
 .ni .n-icon.login{background:rgba(245,158,11,.12);color:var(--warn)}
 .ni .n-msg{flex:1;color:var(--txt2);line-height:1.4}
 .ni .n-time{font-size:10px;color:var(--muted);margin-top:2px}
-
-/* Video call */
-.vcall{display:none;position:fixed;inset:0;background:#000;z-index:2000;flex-direction:column}
-.vcall.active{display:flex}
-.vcall .remote{flex:1;width:100%;object-fit:cover;background:#111}
-.vcall .local{position:absolute;bottom:80px;right:20px;width:160px;height:120px;border-radius:var(--rs);object-fit:cover;border:2px solid var(--border);background:#222;z-index:1}
-.cc{position:absolute;bottom:0;left:0;right:0;padding:16px;display:flex;justify-content:center;gap:16px;background:linear-gradient(transparent,rgba(0,0,0,.8))}
-.cc-btn{width:50px;height:50px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:none;color:#fff;cursor:pointer;font-size:20px}
-.cc-btn.end{background:var(--red)}.cc-btn.mute{background:rgba(255,255,255,.2)}
-.ctimer{position:absolute;top:20px;left:50%;transform:translateX(-50%);color:#fff;font-size:14px;background:rgba(0,0,0,.5);padding:4px 14px;border-radius:20px}
-.calling-status{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#fff;text-align:center;font-size:18px}
-.calling-status .dots{animation:pulse 1.5s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
 /* Lightbox */
 .lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:1000;align-items:center;justify-content:center}
@@ -212,7 +198,6 @@ textarea::placeholder{color:var(--muted)}
         <div class="av" id="chAv" style="border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff"></div>
         <div><div class="nm" id="chName"></div><div class="st" id="chStatus"></div></div>
         <div class="ch-actions">
-          <button class="act-btn call" id="callBtn" onclick="startCall()">&#128222; Call</button>
           <button class="act-btn block" id="blockBtn" onclick="blockUser()">Block</button>
           <button class="act-btn del" onclick="deleteUser()">Delete</button>
         </div>
@@ -239,19 +224,6 @@ textarea::placeholder{color:var(--muted)}
   </div>
 </div>
 
-<!-- Video Call -->
-<div class="vcall" id="videoCall">
-  <div class="ctimer" id="callTimer">00:00</div>
-  <div class="calling-status" id="callingStatus"><div>Calling...<span class="dots">...</span></div></div>
-  <video class="remote" id="remoteVideo" autoplay playsinline></video>
-  <video class="local" id="localVideo" autoplay playsinline muted></video>
-  <div class="cc">
-    <button class="cc-btn mute" id="muteBtn" onclick="toggleMute()">&#127908;</button>
-    <button class="cc-btn end" onclick="endCall()">&#128308;</button>
-    <button class="cc-btn mute" id="camBtn" onclick="toggleCam()">&#127909;</button>
-  </div>
-</div>
-
 <!-- Confirm Dialog -->
 <div class="confirm" id="confirmDialog">
   <div class="confirm-box"><h3 id="confTitle"></h3><p id="confMsg"></p>
@@ -265,7 +237,6 @@ textarea::placeholder{color:var(--muted)}
 
 <script>
 const socket=io();let currentUser=null,privateKey=null,authToken=null,activeChat=null,contacts=[],chatCache={},onlineSet=new Set(),pendingMedia=null,typingTimer=null,notifs=[];
-let peerConnection=null,localStream=null,callTimerInterval=null,callSeconds=0;
 
 // ===== CRYPTO =====
 const E2E={
@@ -331,7 +302,6 @@ async function openChat(username){
   $('chAv').textContent=init;$('chAv').style.background=sColor(username);
   $('chName').textContent=c.fullName;
   $('blockBtn').textContent=c.blocked?'Unblock':'Block';
-  $('callBtn').disabled=!onlineSet.has(username);
   updSt();
   if(window.innerWidth<=768)$('sidebar').classList.add('hidden');
   await loadMsgs(username);$('msgInp').focus();renderContacts();
@@ -387,7 +357,7 @@ function blockUser(){
 function deleteUser(){
   if(!activeChat)return;const c=contacts.find(x=>x.username===activeChat);if(!c)return;
   showConfirm('Delete User',`Permanently delete ${c.fullName} and all their messages? This cannot be undone.`,async()=>{
-    await api(`/api/admin/delete/${activeChat}`,{});
+    await api(`/api/admin/delete/${activeChat}`,null,'DELETE');
     activeChat=null;showPlaceholder();await loadContacts();toast('User deleted.');closeConfirm();
   });
 }
@@ -407,42 +377,6 @@ function renderNotifs(){
 function toggleNotifs(){const p=$('notifPanel');p.classList.toggle('active');if(p.classList.contains('active'))loadNotifs()}
 async function markAllRead(){await api('/api/admin/notifications/read',{});notifs.forEach(n=>n.read=true);renderNotifs()}
 
-// ===== VIDEO CALL =====
-async function startCall(){
-  if(!activeChat||!onlineSet.has(activeChat)){toast('Client is offline.');return}
-  try{
-    localStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
-    $('localVideo').srcObject=localStream;
-    peerConnection=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]});
-    localStream.getTracks().forEach(t=>peerConnection.addTrack(t,localStream));
-    peerConnection.ontrack=e=>{$('remoteVideo').srcObject=e.streams[0];$('callingStatus').style.display='none'};
-    peerConnection.onicecandidate=e=>{if(e.candidate)socket.emit('ice_candidate',{to:activeChat,candidate:e.candidate})};
-    peerConnection.onconnectionstatechange=()=>{if(peerConnection.connectionState==='disconnected'||peerConnection.connectionState==='failed')endCall()};
-    const offer=await peerConnection.createOffer();await peerConnection.setLocalDescription(offer);
-    socket.emit('call_user',{to:activeChat,offer});
-    $('videoCall').classList.add('active');$('callingStatus').style.display='block';
-    callSeconds=0;callTimerInterval=setInterval(()=>{callSeconds++;$('callTimer').textContent=fmtTimer(callSeconds)},1000);
-  }catch(e){console.error(e);toast('Could not access camera.');endCall()}
-}
-
-socket.on('call_answered',async d=>{
-  try{await peerConnection.setRemoteDescription(new RTCSessionDescription(d.answer));$('callingStatus').style.display='none'}catch(e){console.error(e)}
-});
-socket.on('call_ended',()=>endCall());
-socket.on('call_failed',d=>{toast(d.reason);endCall()});
-socket.on('ice_candidate',async d=>{if(peerConnection)try{await peerConnection.addIceCandidate(new RTCIceCandidate(d.candidate))}catch{}});
-
-function endCall(){
-  if(peerConnection){peerConnection.close();peerConnection=null}
-  if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null}
-  if(callTimerInterval){clearInterval(callTimerInterval);callTimerInterval=null}
-  $('videoCall').classList.remove('active');$('remoteVideo').srcObject=null;$('localVideo').srcObject=null;
-  if(activeChat)socket.emit('end_call',{to:activeChat});
-}
-function toggleMute(){if(!localStream)return;const a=localStream.getAudioTracks()[0];if(a){a.enabled=!a.enabled;$('muteBtn').style.opacity=a.enabled?1:.4}}
-function toggleCam(){if(!localStream)return;const v=localStream.getVideoTracks()[0];if(v){v.enabled=!v.enabled;$('camBtn').style.opacity=v.enabled?1:.4}}
-function fmtTimer(s){return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
-
 // ===== SOCKET =====
 socket.on('online_users',l=>{onlineSet=new Set(l);renderContacts();updSt()});
 socket.on('user_online',d=>{if(d.online)onlineSet.add(d.username);else onlineSet.delete(d.username);renderContacts();updSt();if(d.online&&d.username!=='admin')loadContacts()});
@@ -459,7 +393,7 @@ async function appendMsg(m){
   if(activeChat===w)renderMsgs(chatCache[w]);renderContacts();
 }
 
-function updSt(){if(!activeChat)return;const st=$('chStatus');const on=onlineSet.has(activeChat);st.textContent=on?'Online':'Offline';st.className='st '+(on?'on':'off');$('callBtn').disabled=!on}
+function updSt(){if(!activeChat)return;const st=$('chStatus');const on=onlineSet.has(activeChat);st.textContent=on?'Online':'Offline';st.className='st '+(on?'on':'off')}
 function emitTyp(){if(!activeChat)return;socket.emit('typing',{to:activeChat});clearTimeout(typingTimer);typingTimer=setTimeout(()=>socket.emit('stop_typing',{to:activeChat}),1500)}
 
 // ===== HELPERS =====
@@ -476,7 +410,7 @@ function autoR(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeig
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000)}
 function openLB(u,t){if(t==='i'){$('lbImg').src=u;$('lbImg').style.display='block';$('lbVid').style.display='none'}else{$('lbVid').src=u;$('lbVid').style.display='block';$('lbImg').style.display='none'}$('lb').classList.add('active')}
 function closeLB(){$('lb').classList.remove('active');$('lbVid').pause()}
-async function api(url,body){const o={headers:{'Content-Type':'application/json'}};if(authToken)o.headers['x-auth-token']=authToken;if(body){o.method='POST';o.body=JSON.stringify(body)}return(await fetch(url,o)).json()}
+async function api(url,body,method){const o={headers:{'Content-Type':'application/json'}};if(authToken)o.headers['x-auth-token']=authToken;if(method)o.method=method;else if(body){o.method='POST';o.body=JSON.stringify(body)}return(await fetch(url,o)).json()}
 </script>
 </body>
 </html>

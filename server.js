@@ -373,8 +373,8 @@ function sanitizeUser(u) {
   return { username: u.username, fullName: u.fullName, role: u.role, publicKey: u.publicKey, createdAt: u.createdAt };
 }
 
-// ========== AUTO-DELETE MESSAGES EVERY 10 MINUTES ==========
-const AUTO_DELETE_INTERVAL = 10 * 60 * 1000; // 10 minutes
+// ========== AUTO-DELETE MESSAGES EVERY 2 HOURS ==========
+const AUTO_DELETE_INTERVAL = 2 * 60 * 60 * 1000; // 2 hours
 
 setInterval(() => {
   if (messages.length === 0) return;
@@ -391,6 +391,6 @@ initAdmin().then(() => {
     console.log(`Client site: /`);
     console.log(`Admin portal: /admin-portal`);
     console.log(`Admin login: admin / AdminSecure!99`);
-    console.log(`Messages auto-delete every 10 minutes`);
+    console.log(`Messages auto-delete every 2 hours`);
   });
 });

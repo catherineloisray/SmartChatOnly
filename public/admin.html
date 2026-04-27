@@ -358,7 +358,8 @@ function blockUser(){
 function deleteUser(){
   if(!activeChat)return;const c=contacts.find(x=>x.username===activeChat);if(!c)return;
   showConfirm('Delete User',`Permanently delete ${c.fullName} and all their messages? This cannot be undone.`,async()=>{
-    await api(`/api/admin/delete/${activeChat}`,null,'DELETE');
+    const res=await api(`/api/admin/delete/${activeChat}`,null,'DELETE');
+    if(res.error){toast(res.error);closeConfirm();return}
     activeChat=null;showPlaceholder();await loadContacts();toast('User deleted.');closeConfirm();
   });
 }

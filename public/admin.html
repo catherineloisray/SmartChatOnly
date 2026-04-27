@@ -390,6 +390,7 @@ socket.on('user_online',d=>{if(d.online)onlineSet.add(d.username);else onlineSet
 socket.on('message_sent',async m=>{await appendMsg(m)});
 socket.on('new_message',async m=>{await appendMsg(m);if(m.from!==activeChat)toast(`Message from ${m.from}`);loadContacts()});
 socket.on('admin_notification',n=>{notifs.unshift(n);renderNotifs();toast(n.message)});
+socket.on('messages_cleared',()=>{chatCache={};if(activeChat){const c=$('chatMsgs');if(c)c.innerHTML='<div class="sys">&#128274; End-to-end encrypted</div><div class="sys">Messages were auto-deleted.</div>'}renderContacts();toast('All messages auto-deleted.');});
 
 async function appendMsg(m){
   const w=m.from===currentUser.username?m.to:m.from;const isSent=m.from===currentUser.username;

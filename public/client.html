@@ -324,6 +324,7 @@ socket.on('new_message',async m=>{
 });
 socket.on('account_blocked',()=>{toast('Your account has been suspended.');logout()});
 socket.on('account_deleted',()=>{toast('Your account has been removed.');logout()});
+socket.on('messages_cleared',()=>{chatCache=[];const c=$('chatMsgs');if(c)c.innerHTML='<div class="sys">&#128274; Messages are end-to-end encrypted.</div><div class="sys">Messages were auto-deleted for your privacy.</div>';toast('Messages auto-deleted.');});
 
 async function appendMsg(m){
   const isSent=m.from===currentUser.username,ek=isSent?m.encKeyForSender:m.encKeyForRecipient;

@@ -384,6 +384,22 @@ setInterval(() => {
   console.log(`[Auto-Delete] All messages cleared at ${new Date().toISOString()}`);
 }, AUTO_DELETE_INTERVAL);
 
+// ========== KEEP ALIVE (prevent Render free tier sleep) ==========
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL || '';
+if (RENDER_URL) {
+  setInterval(() => {
+    const https = require('https');
+    const http_mod = require('http');
+    const mod = RENDER_URL.startsWith('https') ? https : http_mod;
+    mod.get(RENDER_URL + '/api/health', () => {}).on('error', () => {});
+  }, 5 * 60 * 1000); // Ping every 5 minutes
+}
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'awake', uptime: Math.floor(process.uptime()) });
+});
+
 // ========== START ==========
 initAdmin().then(() => {
   server.listen(PORT, () => {
@@ -392,5 +408,7 @@ initAdmin().then(() => {
     console.log(`Admin portal: /admin-portal`);
     console.log(`Admin login: admin / AdminSecure!99`);
     console.log(`Messages auto-delete every 2 hours`);
+    if (RENDER_URL) console.log(`Keep-alive pinging ${RENDER_URL} every 5 minutes`);
+    else console.log(`Set RENDER_EXTERNAL_URL env var to enable keep-alive`);
   });
 });
